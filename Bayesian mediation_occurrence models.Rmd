@@ -1,0 +1,162 @@
+---
+title: "Bayesian mediation models for the occurrence of individual canopy species"
+date: "20/12/2022"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(here)
+library(future)
+library(brms)
+
+options(digits=3)
+
+```
+
+# Canopy cover mediates the effects of a decadal increase in time since fire on arboreal birds
+
+Complete and partial Bayesian mediation models for the occurrence of individual canopy species.         
+
+*Study area*  
+The Greater Blue Mountains World Heritage Area, Australia.    
+46 33-ha circular sites.    
+
+*Site level*  
+The following canopy species were detected/not detected (1/0) in each site.  
+Analytical code was the same for each species, with code for the BHHE provided below as an example.  
+BHHE;	Melithreptus brevirostris,	Brown-headed Honeyeater.    
+CBCK;	Scythrops novaehollandiae,	Channel-billed Cuckoo.    
+CICB;	Coracina tenuirostris,	Cicadabird.    
+GGCT;	Callocephalon fimbriatum,	Gang-Gang Cockatoo.    
+LEFC;	Myiagra rubecula,	Leaden Flycatcher.    
+MTBD;	Dicaeum hirundinaceum,	Mistletoebird.    
+OBOR;	Oriolus sagittatus,	Olive-backed Oriole.    
+STTB;	Acanthiza lineata,	Striated Thornbill.    
+
+TSF; an indicator variable for time since fire, 0 if five years (last burnt 2013), 1 if 16 years (last burnt 2002).           
+CPY; the proportion of canopy cover over each site.      
+LAT; latitude at the center of each site (standardised, mean = 0, s.d. = 1).    
+SEV; the proportion of each site that had been burnt by high-severity fire (standardised).      
+
+
+### Read in the data
+
+```{r}
+
+path <- here("data", "dat.mod.csv")
+dat.mod <- read.csv(path, stringsAsFactors = FALSE)
+
+```
+
+
+### Occurrence model: complete mediation
+
+This model represents the TSF effect on the occurrence of individual canopy species as being completely mediated through canopy cover.      
+Equation 3 in the article.  
+
+```{r}
+
+canopy_mod <- bf(CPY ~ LAT + SEV + TSF, 
+                   family = Beta(link = "logit"))
+
+occur_mod_complete <- bf(BHHE ~ LAT + SEV + CPY, 
+                                 family = bernoulli(link = "logit"))
+
+prior <- set_prior("normal(0,10)", class = "b", resp = c("BHHE", "CPY")) +
+                   set_prior("normal(0,10)", class = "Intercept", resp = c("BHHE", "CPY"))
+
+future::plan(multisession, workers = 4)
+  
+ occur_complete_result <-  brm(
+    occur_mod_complete + canopy_mod + set_rescor(FALSE),
+    prior = prior,
+    save_pars = save_pars(all = TRUE),  # to enable moment_match for LOO
+    data = dat.mod,
+    chains = 4, 
+    iter = 11000, 
+    warmup = 1000, 
+    thin = 10, 
+    future = TRUE, 
+    control = list(adapt_delta = 0.95),
+    inits = "0"
+  )
+  
+future::plan(sequential)
+
+save(occur_complete_result, file = 'models/occur_complete_result.RData')
+
+load('models/occur_complete_result.RData')
+
+# Check of the fitted model terms and number of effective samples
+summary(occur_complete_result)
+mcmc_plot(occur_complete_result, type = "dens")
+
+# Obtain Bayesian R2 values
+bayes_R2(occur_complete_result, probs = c(0.05, 0.95))
+
+```
+
+
+### Occurrence model: partial mediation
+
+This model represents the TSF effect on the occurrence of individual canopy species as being partially mediated through canopy cover.      
+Equation 4 in the article.    
+
+```{r}
+
+canopy_mod <- bf(CPY ~ LAT + SEV + TSF, 
+                   family = Beta(link = "logit"))
+
+occur_mod_partial  <- bf(BHHE ~ LAT + SEV + CPY + TSF, 
+                      family = bernoulli(link = "logit"))
+
+prior <- set_prior("normal(0,10)", class = "b", resp = c("BHHE", "CPY")) +
+                   set_prior("normal(0,10)", class = "Intercept", resp = c("BHHE", "CPY"))
+
+  future::plan(multisession, workers = 4)
+
+  occur_partial_result <-  brm(
+    occur_mod_partial + canopy_mod + set_rescor(FALSE),
+    prior = prior,
+    save_pars = save_pars(all = TRUE),  # to enable moment_match for LOO
+    data = dat.mod,
+    chains = 4, 
+    iter = 11000, 
+    warmup = 1000, 
+    thin = 10, 
+    future = TRUE, 
+    control = list(adapt_delta = 0.95),
+    inits = "0"
+  )
+  
+future::plan(sequential)
+
+save(occur_partial_result, file = 'models/occur_partial_result.RData')
+  
+load('models/occur_partial_result.RData')
+
+# Check of the fitted model terms and number of effective samples
+summary(occur_partial_result)
+mcmc_plot(occur_partial_result, type = "dens")
+
+# Obtain Bayesian R2 values
+bayes_R2(occur_partial_result, probs = c(0.05, 0.95))
+
+```
+
+
+### Model comparison
+Compare complete and partial mediation models using LOO via brms
+
+```{r}
+
+x <- LOO(occur_complete_result, occur_partial_result, moment_match = TRUE) # moment matching applied as per methods  
+
+# Difference in ELPD values between models
+x$diffs
+
+```
+
